@@ -1,0 +1,122 @@
+###############################################################################
+# Magentic-meetbot  —  docker-compose (development)
+#
+# Services:
+#   postgres   — meeting records, transcripts, summaries
+#   redis      — task queue (bot join requests + Celery broker)
+#   api        — FastAPI REST API
+#   pipeline   — Celery worker (transcribe → diarize → summarize)
+#   bot        — Playwright Meet bot + PulseAudio audio capture
+###############################################################################
+version: "3.9"
+
+x-shared-env: &shared-env
+  POSTGRES_URL: ${POSTGRES_URL:-postgresql+asyncpg://meetbot:meetbot@postgres:5432/meetbot}
+  REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+  SHARED_DATA_DIR: /data
+  HF_TOKEN: ${HF_TOKEN}
+  OPENAI_API_KEY: ${OPENAI_API_KEY}
+  PM_API_BASE_URL: ${PM_API_BASE_URL}
+  PM_API_KEY: ${PM_API_KEY}
+
+services:
+  # ── PostgreSQL ─────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-meetbot}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-meetbot}
+      POSTGRES_DB: ${POSTGRES_DB:-meetbot}
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER:-meetbot}"]
+      interval: 5s
+      retries: 5
+
+  # ── Redis ──────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      retries: 5
+
+  # ── FastAPI service ────────────────────────
+  api:
+    build:
+      context: .
+      dockerfile: api/Dockerfile
+    restart: unless-stopped
+    environment:
+      <<: *shared-env
+      API_BASE_URL: http://api:8000
+    ports:
+      - "8000:8000"
+    volumes:
+      - shared_data:/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  # ── Celery worker (pipeline) ───────────────
+  pipeline:
+    build:
+      context: .
+      dockerfile: pipeline/Dockerfile
+    restart: unless-stopped
+    environment:
+      <<: *shared-env
+      API_BASE_URL: http://api:8000
+      WHISPER_MODEL_SIZE: ${WHISPER_MODEL_SIZE:-large-v3-turbo}
+      WHISPER_LANGUAGE: ${WHISPER_LANGUAGE:-}
+      WHISPER_DEVICE: ${WHISPER_DEVICE:-cpu}
+      WHISPER_COMPUTE_TYPE: ${WHISPER_COMPUTE_TYPE:-int8}
+    volumes:
+      - shared_data:/data
+      - model_cache:/root/.cache
+    depends_on:
+      redis:
+        condition: service_healthy
+    # GPU support: uncomment below for NVIDIA GPU
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
+
+  # ── Meet bot ───────────────────────────────
+  bot:
+    build:
+      context: .
+      dockerfile: bot/Dockerfile
+    restart: unless-stopped
+    environment:
+      <<: *shared-env
+      API_BASE_URL: http://api:8000
+      GOOGLE_EMAIL: ${GOOGLE_EMAIL}
+      GOOGLE_PASSWORD: ${GOOGLE_PASSWORD}
+      BOT_DISPLAY_NAME: ${BOT_DISPLAY_NAME:-Magentic Notetaker}
+      BOT_MAX_MEETING_DURATION_SEC: ${BOT_MAX_MEETING_DURATION_SEC:-7200}
+      BOT_MODE: worker
+      RECORDING_OUTPUT_PATH: /data/recording.wav
+    volumes:
+      - shared_data:/data
+    depends_on:
+      - api
+      - redis
+
+volumes:
+  pg_data:
+  shared_data:
+  model_cache:

@@ -1,0 +1,417 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Magentic Meet Bot - Meetings Dashboard</title>
+  <style>
+    :root {
+      --bg: #0b1020;
+      --panel: #121a31;
+      --panel-2: #0f1730;
+      --text: #e9ecf7;
+      --muted: #a4afc7;
+      --accent: #6ea8fe;
+      --border: #233157;
+      --ok: #2ecc71;
+      --warn: #f1c40f;
+      --bad: #e74c3c;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: Inter, Segoe UI, Arial, sans-serif;
+      background: linear-gradient(180deg, var(--bg), #070b17);
+      color: var(--text);
+      min-height: 100vh;
+    }
+    .wrap {
+      width: min(1200px, 96vw);
+      margin: 24px auto 40px;
+    }
+    h1 {
+      margin: 0 0 8px;
+      font-size: 26px;
+    }
+    .sub {
+      color: var(--muted);
+      margin-bottom: 18px;
+    }
+    .toolbar {
+      display: flex;
+      gap: 10px;
+      margin-bottom: 14px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+    button {
+      border: 1px solid var(--border);
+      background: var(--panel);
+      color: var(--text);
+      padding: 8px 12px;
+      border-radius: 8px;
+      cursor: pointer;
+    }
+    button:hover { border-color: var(--accent); }
+    .pill {
+      border: 1px solid var(--border);
+      padding: 5px 10px;
+      border-radius: 999px;
+      color: var(--muted);
+      font-size: 12px;
+      background: rgba(255,255,255,0.02);
+    }
+    .status-completed { color: var(--ok); }
+    .status-processing, .status-joining { color: var(--warn); }
+    .status-failed { color: var(--bad); }
+
+    .card {
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      background: var(--panel-2);
+      overflow: hidden;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+    th, td {
+      border-bottom: 1px solid var(--border);
+      padding: 10px 12px;
+      text-align: left;
+      vertical-align: top;
+      font-size: 14px;
+    }
+    th {
+      background: rgba(255,255,255,0.03);
+      color: var(--muted);
+      font-weight: 600;
+    }
+    tr:hover td { background: rgba(255,255,255,0.02); }
+    .meeting-id {
+      font-family: Consolas, monospace;
+      font-size: 12px;
+      color: var(--muted);
+      word-break: break-all;
+    }
+    .details {
+      margin-top: 16px;
+      display: grid;
+      gap: 12px;
+    }
+    .panel {
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      background: var(--panel);
+      padding: 12px;
+    }
+    .panel h3 {
+      margin: 0 0 8px;
+      font-size: 16px;
+    }
+    .panel-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      margin-bottom: 8px;
+      flex-wrap: wrap;
+    }
+    .toggle-row {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      align-items: center;
+      margin: 6px 0 2px;
+    }
+    .toggle-row label {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      color: var(--muted);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 5px 8px;
+      background: rgba(255,255,255,0.02);
+      cursor: pointer;
+      user-select: none;
+    }
+    .toggle-row input { accent-color: var(--accent); }
+    .audit-table-wrap {
+      overflow-x: auto;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+    }
+    .audit-table th, .audit-table td {
+      font-size: 12px;
+      padding: 8px 10px;
+    }
+    .lang-pill {
+      display: inline-block;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      padding: 2px 7px;
+      color: var(--muted);
+      font-size: 11px;
+      min-width: 44px;
+      text-align: center;
+    }
+    pre {
+      white-space: pre-wrap;
+      word-break: break-word;
+      margin: 0;
+      color: #d8def0;
+      font-size: 13px;
+      line-height: 1.45;
+    }
+    .muted { color: var(--muted); }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>Meetings Dashboard</h1>
+    <div class="sub">Demo landing page for all meetings joined by notetaker.</div>
+    <div class="toolbar">
+      <button id="refreshBtn">Refresh Meetings</button>
+      <span id="summaryPill" class="pill">Loading...</span>
+    </div>
+
+    <div class="card">
+      <table>
+        <thead>
+          <tr>
+            <th>Meeting</th>
+            <th>Date</th>
+            <th>Status</th>
+            <th>Duration</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody id="meetingsBody"></tbody>
+      </table>
+    </div>
+
+    <div class="details" id="detailsArea" style="display:none;">
+      <div class="panel">
+        <h3>AI Summary</h3>
+        <pre id="summaryBlock"></pre>
+      </div>
+      <div class="panel">
+        <h3>Raw Transcript</h3>
+        <pre id="rawBlock"></pre>
+      </div>
+      <div class="panel">
+        <h3>Translated Transcript</h3>
+        <pre id="translatedBlock"></pre>
+      </div>
+      <div class="panel">
+        <div class="panel-head">
+          <h3>Line-by-Line Audit</h3>
+          <span class="pill" id="auditPill">0 line(s)</span>
+        </div>
+        <div class="toggle-row">
+          <label><input type="checkbox" id="showSourceToggle" checked /> Source ASR Text</label>
+          <label><input type="checkbox" id="showLangToggle" checked /> Detected Language</label>
+          <label><input type="checkbox" id="showEnglishToggle" checked /> English Text</label>
+        </div>
+        <div class="audit-table-wrap">
+          <table class="audit-table">
+            <thead>
+              <tr>
+                <th>Time</th>
+                <th>Speaker</th>
+                <th id="sourceHead">Source ASR Text</th>
+                <th id="langHead">Detected Lang</th>
+                <th id="englishHead">English Text</th>
+              </tr>
+            </thead>
+            <tbody id="auditBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const meetingsBody = document.getElementById("meetingsBody");
+    const summaryPill = document.getElementById("summaryPill");
+    const detailsArea = document.getElementById("detailsArea");
+    const summaryBlock = document.getElementById("summaryBlock");
+    const rawBlock = document.getElementById("rawBlock");
+    const translatedBlock = document.getElementById("translatedBlock");
+    const auditBody = document.getElementById("auditBody");
+    const auditPill = document.getElementById("auditPill");
+    const showSourceToggle = document.getElementById("showSourceToggle");
+    const showLangToggle = document.getElementById("showLangToggle");
+    const showEnglishToggle = document.getElementById("showEnglishToggle");
+    const sourceHead = document.getElementById("sourceHead");
+    const langHead = document.getElementById("langHead");
+    const englishHead = document.getElementById("englishHead");
+    const refreshBtn = document.getElementById("refreshBtn");
+    let currentTranscriptRows = [];
+
+    function escapeHtml(input) {
+      return String(input ?? "")
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#039;");
+    }
+
+    function formatDate(v) {
+      if (!v) return "-";
+      const dt = new Date(v);
+      if (Number.isNaN(dt.getTime())) return v;
+      return dt.toLocaleString();
+    }
+
+    function formatTimestamp(seconds) {
+      const total = Math.max(0, Math.floor(Number(seconds || 0)));
+      const h = Math.floor(total / 3600);
+      const m = Math.floor((total % 3600) / 60);
+      const s = total % 60;
+      if (h > 0) return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+      return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+    }
+
+    function statusClass(status) {
+      const s = String(status || "").toLowerCase();
+      if (s === "completed") return "status-completed";
+      if (s === "processing" || s === "joining") return "status-processing";
+      if (s === "failed") return "status-failed";
+      return "";
+    }
+
+    async function fetchJson(url) {
+      const res = await fetch(url);
+      if (!res.ok) throw new Error("HTTP " + res.status + " for " + url);
+      return res.json();
+    }
+
+    async function loadMeetings() {
+      summaryPill.textContent = "Loading meetings...";
+      meetingsBody.innerHTML = "";
+      try {
+        const meetings = await fetchJson("/api/v1/meetings");
+        summaryPill.textContent = `${meetings.length} meeting(s)`;
+
+        if (!meetings.length) {
+          meetingsBody.innerHTML = `<tr><td colspan="5" class="muted">No meetings found.</td></tr>`;
+          return;
+        }
+
+        meetings.forEach((m) => {
+          const tr = document.createElement("tr");
+          tr.innerHTML = `
+            <td>
+              <div><strong>${escapeHtml(m.title || "Untitled Meeting")}</strong></div>
+              <div class="meeting-id">${escapeHtml(m.id)}</div>
+            </td>
+            <td>${escapeHtml(formatDate(m.date))}</td>
+            <td class="${statusClass(m.status)}">${escapeHtml(m.status || "-")}</td>
+            <td>${m.duration == null ? "-" : escapeHtml(String(m.duration) + " min")}</td>
+            <td><button data-id="${escapeHtml(m.id)}">View Details</button></td>
+          `;
+          tr.querySelector("button").addEventListener("click", () => loadMeetingDetails(m.id));
+          meetingsBody.appendChild(tr);
+        });
+      } catch (err) {
+        summaryPill.textContent = "Failed to load meetings";
+        meetingsBody.innerHTML = `<tr><td colspan="5" class="status-failed">${escapeHtml(err.message)}</td></tr>`;
+      }
+    }
+
+    function prettySummary(meeting) {
+      const lines = [];
+      lines.push(`Summary: ${meeting.summary || "-"}`);
+      lines.push("");
+      lines.push("Key Points:");
+      (meeting.key_points || []).forEach((k, i) => lines.push(`${i + 1}. ${k}`));
+      if (!(meeting.key_points || []).length) lines.push("- none -");
+      lines.push("");
+      lines.push("Action Items:");
+      (meeting.action_items || []).forEach((a, i) => {
+        const owner = a.owner || "Unassigned";
+        const deadline = a.deadline || "No deadline";
+        lines.push(`${i + 1}. ${a.task} (Owner: ${owner}, Deadline: ${deadline})`);
+      });
+      if (!(meeting.action_items || []).length) lines.push("- none -");
+      lines.push("");
+      lines.push("Decisions:");
+      (meeting.decisions || []).forEach((d, i) => lines.push(`${i + 1}. ${d}`));
+      if (!(meeting.decisions || []).length) lines.push("- none -");
+      lines.push("");
+      lines.push("Topics Discussed:");
+      (meeting.topics_discussed || []).forEach((t, i) => lines.push(`${i + 1}. ${t}`));
+      if (!(meeting.topics_discussed || []).length) lines.push("- none -");
+      return lines.join("\n");
+    }
+
+    function renderAuditTable() {
+      const showSource = showSourceToggle.checked;
+      const showLang = showLangToggle.checked;
+      const showEnglish = showEnglishToggle.checked;
+
+      sourceHead.style.display = showSource ? "" : "none";
+      langHead.style.display = showLang ? "" : "none";
+      englishHead.style.display = showEnglish ? "" : "none";
+
+      auditBody.innerHTML = "";
+      auditPill.textContent = `${currentTranscriptRows.length} line(s)`;
+
+      if (!currentTranscriptRows.length) {
+        auditBody.innerHTML = `<tr><td colspan="5" class="muted">No transcript lines available.</td></tr>`;
+        return;
+      }
+
+      currentTranscriptRows.forEach((row) => {
+        const tr = document.createElement("tr");
+        const sourceCell = `<td style="${showSource ? "" : "display:none;"}">${escapeHtml(row.text || "(empty)")}</td>`;
+        const langCell = `<td style="${showLang ? "" : "display:none;"}"><span class="lang-pill">${escapeHtml((row.language || "unknown").toLowerCase())}</span></td>`;
+        const englishCell = `<td style="${showEnglish ? "" : "display:none;"}">${escapeHtml(row.text_en || row.text || "(empty)")}</td>`;
+
+        tr.innerHTML = `
+          <td>${escapeHtml(formatTimestamp(row.start))}</td>
+          <td>${escapeHtml(row.speaker || "UNKNOWN")}</td>
+          ${sourceCell}
+          ${langCell}
+          ${englishCell}
+        `;
+        auditBody.appendChild(tr);
+      });
+    }
+
+    async function loadMeetingDetails(meetingId) {
+      detailsArea.style.display = "grid";
+      summaryBlock.textContent = "Loading...";
+      rawBlock.textContent = "Loading...";
+      translatedBlock.textContent = "Loading...";
+      currentTranscriptRows = [];
+      renderAuditTable();
+      try {
+        const meeting = await fetchJson(`/api/v1/meetings/${meetingId}`);
+        const transcript = await fetchJson(`/api/v1/meetings/${meetingId}/transcript`);
+        summaryBlock.textContent = prettySummary(meeting);
+        rawBlock.textContent = transcript.raw_transcript || "(empty)";
+        translatedBlock.textContent = transcript.translated_transcript || "(empty)";
+        currentTranscriptRows = Array.isArray(meeting.transcript) ? meeting.transcript : [];
+        renderAuditTable();
+      } catch (err) {
+        summaryBlock.textContent = "Failed to load details: " + err.message;
+        rawBlock.textContent = "";
+        translatedBlock.textContent = "";
+        currentTranscriptRows = [];
+        renderAuditTable();
+      }
+    }
+
+    showSourceToggle.addEventListener("change", renderAuditTable);
+    showLangToggle.addEventListener("change", renderAuditTable);
+    showEnglishToggle.addEventListener("change", renderAuditTable);
+    refreshBtn.addEventListener("click", loadMeetings);
+    loadMeetings();
+  </script>
+</body>
+</html>

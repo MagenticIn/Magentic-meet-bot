@@ -1,0 +1,37 @@
+*.pyc
+__pycache__/
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Environment
+.env
+.env.local
+.venv/
+venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Docker
+docker-compose.override.yml
+
+# Data
+/data/
+*.wav
+*.mp3
+*.mp4
+
+# Model cache
+*.bin
+*.pt
+*.onnx
+
+# OS
+.DS_Store
+Thumbs.db

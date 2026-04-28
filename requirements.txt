@@ -1,0 +1,39 @@
+# ──────────────────────────────────────────────
+# Magentic-meetbot  —  Python dependencies
+#
+# Union of all services for local development.
+# Individual Dockerfiles install only what they need.
+# ──────────────────────────────────────────────
+
+# ── API ──────────────────────────────────────
+fastapi==0.115.12
+uvicorn[standard]==0.34.2
+pydantic==2.11.1
+pydantic-settings==2.9.1
+sqlalchemy[asyncio]==2.0.40
+asyncpg==0.30.0
+alembic==1.15.2
+python-multipart==0.0.20
+httpx==0.28.1
+redis==5.3.0
+celery==5.5.2
+
+# ── Bot ──────────────────────────────────────
+playwright==1.52.0
+
+# ── Pipeline: ML ─────────────────────────────
+faster-whisper==1.2.1
+whisperx @ git+https://github.com/m-bain/whisperX.git
+torch==2.6.0
+torchaudio==2.6.0
+transformers==4.51.3
+sentencepiece==0.2.0
+pyannote.audio==3.3.2
+
+# ── Pipeline: LLM ───────────────────────────
+openai>=1.0.0
+
+# ── Shared / Utilities ──────────────────────
+python-dotenv==1.1.0
+tenacity==9.1.2
+structlog==25.3.0

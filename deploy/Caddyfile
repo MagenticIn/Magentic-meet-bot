@@ -1,0 +1,19 @@
+{$APP_DOMAIN} {
+	encode gzip
+
+	# Optional org-level gate (basic auth). Generate hash:
+	# docker run --rm caddy:2.8-alpine caddy hash-password --plaintext "your-password"
+	basicauth {
+		{$DASHBOARD_USER} {$DASHBOARD_PASS_HASH}
+	}
+
+	@api path /api/* /health /docs* /openapi.json
+	handle @api {
+		reverse_proxy api:8000
+	}
+
+	# Dashboard and root app pages
+	handle {
+		reverse_proxy api:8000
+	}
+}
