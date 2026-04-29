@@ -1,6 +1,6 @@
 # Magentic-meetbot
 
-Self-hosted AI meeting notetaker that auto-joins Google Meet calls, records audio, transcribes with **faster-whisper** (Hindi + English), diarizes speakers with **whisperx**, summarizes with an LLM (OpenAI `gpt-4o-mini`), and POSTs results to an external Project Management API.
+Self-hosted AI meeting notetaker that auto-joins Google Meet, records audio, then runs a Celery pipeline: by default **OpenAI `gpt-4o-transcribe-diarize`** (one API call for transcript + speakers), optional **faster-whisper + whisperx** via `TRANSCRIPTION_BACKEND=whisper`, Hindi line translation (Helsinki-NLP when needed), **OpenAI `gpt-4o-mini`** summaries, and optional POST to an external PM API.
 
 ## Architecture
 
@@ -17,8 +17,7 @@ Self-hosted AI meeting notetaker that auto-joins Google Meet calls, records audi
        │             │  (pipeline)     │
        │             │                 │
        │             │ ┌─────────────┐ │
-       │             │ │ transcribe  │ │  faster-whisper
-       │             │ │ diarize     │ │  whisperx
+       │             │ │ ASR+diarize │ │  OpenAI (default) or whisper+whisperx
        │             │ │ summarize   │ │  OpenAI API
        │             │ └─────────────┘ │
        │             └────────┬────────┘
@@ -90,7 +89,7 @@ curl http://localhost:8000/api/v1/meetings/<meeting_id>
 |------------|------|----------------------------------------------------|
 | `api`      | 8000 | FastAPI REST API — meeting CRUD, webhooks           |
 | `bot`      | —    | Playwright bot — joins Meet, records audio          |
-| `pipeline` | —    | Celery worker — transcribe → diarize → summarize   |
+| `pipeline` | —    | Celery worker — transcribe (+ diarize) → summarize   |
 | `postgres` | 5432 | Meeting records, transcripts, summaries             |
 | `redis`    | 6379 | Task queue (bot join requests + Celery broker)      |
 
@@ -107,9 +106,11 @@ curl http://localhost:8000/api/v1/meetings/<meeting_id>
 ├── pipeline/
 │   ├── Dockerfile
 │   ├── worker.py            # Celery app + orchestration task
-│   ├── transcribe.py        # faster-whisper (Hindi + English)
-│   ├── diarize.py           # whisperx speaker diarization
-│   └── summarize.py         # OpenAI LLM summarisation
+│   ├── transcribe.py              # faster-whisper (whisper backend)
+│   ├── openai_transcribe_diarize.py  # OpenAI gpt-4o-transcribe-diarize
+│   ├── diarize.py                 # whisperx (whisper backend)
+│   ├── hi_en_translate.py         # Hindi → English (shared)
+│   └── summarize.py               # OpenAI LLM summarisation
 ├── api/
 │   ├── Dockerfile
 │   ├── main.py              # FastAPI entrypoint
@@ -128,8 +129,11 @@ curl http://localhost:8000/api/v1/meetings/<meeting_id>
 |------------------------------|--------------------------------------------|
 | `GOOGLE_EMAIL`               | Google account email for the bot           |
 | `GOOGLE_PASSWORD`            | Google account app password                |
-| `HF_TOKEN`                   | Hugging Face token (pyannote diarization)  |
-| `OPENAI_API_KEY`             | OpenAI API key (`gpt-4o-mini` summarisation) |
+| `TRANSCRIPTION_BACKEND`      | `openai` (default) or `whisper` (local ASR + HF diarization) |
+| `HF_TOKEN`                   | Hugging Face token — required only for `whisper` backend |
+| `OPENAI_API_KEY`             | OpenAI — STT when backend is `openai`, plus summarisation |
+| `OPENAI_TRANSCRIPTION_LANGUAGE` | Optional `hi` or `en` to bias the **whole** recording; leave empty for **mixed Hindi + English** (default) |
+| `WHISPER_LANGUAGE`           | Local whisper only — language hint for faster-whisper |
 | `PM_API_BASE_URL`            | External PM API base URL                   |
 | `PM_API_KEY`                 | External PM API authentication key         |
 | `POSTGRES_URL`               | PostgreSQL connection string               |

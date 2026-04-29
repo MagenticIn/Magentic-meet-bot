@@ -34,8 +34,8 @@ cp deploy/.env.prod.example .env.prod
 
 Edit `.env.prod` with real values:
 - `APP_DOMAIN`
-- `OPENAI_API_KEY`
-- `HF_TOKEN`
+- `OPENAI_API_KEY` (speech-to-text with `TRANSCRIPTION_BACKEND=openai` and summarisation)
+- `HF_TOKEN` only if you use `TRANSCRIPTION_BACKEND=whisper` (local faster-whisper + diarization)
 - `GOOGLE_EMAIL`, `GOOGLE_PASSWORD`
 - strong DB password values
 

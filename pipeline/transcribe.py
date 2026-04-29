@@ -27,11 +27,13 @@ import os
 import sys
 import time
 from pathlib import Path
-from typing import Any, Optional
+from typing import Optional
 
 import structlog
 import torch
 from faster_whisper import WhisperModel
+
+from pipeline.hi_en_translate import translate_segment
 
 log = structlog.get_logger("transcribe")
 
@@ -53,7 +55,6 @@ WHISPER_LANGUAGE: str = os.getenv("WHISPER_LANGUAGE", "").strip().lower()
 
 # ─── Lazy-loaded singletons ─────────────────────────────────────────────
 _whisper_model: Optional[WhisperModel] = None
-_translation_pipeline: Optional[Any] = None
 
 
 # ═════════════════════════════════════════════════════════════════════════
@@ -210,92 +211,6 @@ def transcribe(audio_path: str) -> list[dict]:
     )
 
     return segments
-
-
-# ═════════════════════════════════════════════════════════════════════════
-#  Hindi → English translation helper
-# ═════════════════════════════════════════════════════════════════════════
-
-def _get_translation_pipeline():
-    """
-    Load the Helsinki-NLP/opus-mt-hi-en translation model (singleton).
-
-    Uses HuggingFace ``transformers.pipeline`` under the hood.
-    The model is downloaded on first use and cached by transformers.
-    """
-    global _translation_pipeline
-
-    if _translation_pipeline is not None:
-        return _translation_pipeline
-
-    log.info("translation.loading_model", model="Helsinki-NLP/opus-mt-hi-en")
-    t0 = time.monotonic()
-
-    # Import here to avoid loading transformers if translation isn't used
-    from transformers import pipeline as hf_pipeline
-
-    _translation_pipeline = hf_pipeline(
-        "translation",
-        model="Helsinki-NLP/opus-mt-hi-en",
-        device=0 if CUDA_AVAILABLE else -1,
-    )
-
-    elapsed = time.monotonic() - t0
-    log.info("translation.model_loaded", elapsed_sec=f"{elapsed:.1f}")
-    return _translation_pipeline
-
-
-def translate_segment(text: str, source_lang: str) -> str:
-    """
-    Translate a single text segment from Hindi to English.
-
-    Parameters
-    ----------
-    text : str
-        The text to translate (expected to be Hindi / Devanagari).
-    source_lang : str
-        ISO 639-1 language code.  Only ``"hi"`` triggers translation;
-        all other languages return the text unchanged.
-
-    Returns
-    -------
-    str
-        English translation if source_lang is ``"hi"``, otherwise the
-        original text unchanged.
-
-    Examples
-    --------
-    >>> translate_segment("नमस्ते, आप कैसे हैं?", "hi")
-    "Hello, how are you?"
-
-    >>> translate_segment("This is English", "en")
-    "This is English"
-    """
-    # Only translate Hindi — everything else passes through
-    if source_lang != "hi":
-        return text
-
-    # Skip empty / whitespace-only text
-    if not text or not text.strip():
-        return text
-
-    pipe = _get_translation_pipeline()
-
-    try:
-        result = pipe(text, max_length=512)
-        if result and isinstance(result, list) and "translation_text" in result[0]:
-            translated = result[0]["translation_text"]
-            log.debug(
-                "translation.translated",
-                source=text[:80],
-                target=translated[:80],
-            )
-            return translated
-        log.warning("translation.unexpected_result", result=result)
-        return text
-    except Exception as exc:
-        log.error("translation.failed", text=text[:80], error=str(exc))
-        return text
 
 
 def translate_segments(segments: list[dict]) -> list[dict]:

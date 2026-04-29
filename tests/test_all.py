@@ -49,6 +49,66 @@ def test_transcribe_mock_returns_shape(tmp_path, monkeypatch):
     assert {"start", "end", "text", "language", "words"}.issubset(data[0].keys())
 
 
+def test_openai_transcribe_diarize_maps_utterances(tmp_path, monkeypatch):
+    wav = tmp_path / "sample.wav"
+    wav.write_bytes(b"RIFF\x00\x00\x00\x00WAVE")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+
+    class FakeSeg:
+        def model_dump(self):
+            return {"speaker": "A", "start": 0.0, "end": 1.5, "text": "Hello"}
+
+    class FakeResp:
+        def model_dump(self):
+            return {"text": "Hello", "segments": [FakeSeg()]}
+
+    class FakeTranscriptions:
+        @staticmethod
+        def create(**kwargs):
+            assert kwargs.get("model") == "gpt-4o-transcribe-diarize"
+            assert kwargs.get("response_format") == "diarized_json"
+            assert kwargs.get("chunking_strategy") == "auto"
+            return FakeResp()
+
+    class FakeAudio:
+        transcriptions = FakeTranscriptions()
+
+    class FakeClient:
+        def __init__(self, **_kw):
+            self.audio = FakeAudio()
+
+    import pipeline.openai_transcribe_diarize as otd
+
+    monkeypatch.setattr(otd, "OpenAI", FakeClient)
+    monkeypatch.setattr(otd, "translate_segment", lambda text, lang: text)
+    utt, raw = otd.transcribe_diarize_openai(str(wav))
+    assert len(utt) == 1
+    assert utt[0]["speaker"] == "SPEAKER_00"
+    assert utt[0]["text"] == "Hello"
+    assert utt[0]["language"] == "en"
+    assert utt[0]["text_en"] == "Hello"
+    assert raw.get("segments")
+
+
+def test_openai_segment_language_devanagari_vs_english():
+    import pipeline.openai_transcribe_diarize as otd
+
+    assert otd._segment_language("नमस्ते, कैसे हैं आप?") == "hi"
+    assert otd._segment_language("Hello, let's start the standup.") == "en"
+    assert otd._segment_language("Chalo agenda discuss karte hain") == "en"
+
+
+def test_openai_request_language_respects_env(monkeypatch):
+    import pipeline.openai_transcribe_diarize as otd
+
+    monkeypatch.delenv("OPENAI_TRANSCRIPTION_LANGUAGE", raising=False)
+    assert otd._openai_request_language() is None
+    monkeypatch.setenv("OPENAI_TRANSCRIPTION_LANGUAGE", "hi")
+    assert otd._openai_request_language() == "hi"
+    monkeypatch.setenv("OPENAI_TRANSCRIPTION_LANGUAGE", "EN")
+    assert otd._openai_request_language() == "en"
+
+
 def test_diarize_format_transcript(sample_utterances, monkeypatch):
     monkeypatch.setitem(sys.modules, "torch", types.SimpleNamespace(cuda=types.SimpleNamespace(is_available=lambda: False)))
     monkeypatch.setitem(sys.modules, "whisperx", types.SimpleNamespace())

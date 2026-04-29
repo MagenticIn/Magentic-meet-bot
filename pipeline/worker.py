@@ -5,7 +5,9 @@ Celery application + task for the audio-processing pipeline.
 
 Flow
 ────
-    audio file  →  transcribe  →  diarize  →  summarize  →  POST to API
+    audio  →  transcribe (+ diarize)  →  summarize  →  POST to API
+
+    Default: OpenAI ``gpt-4o-transcribe-diarize``. Alternative: whisper → diarize.
 
 The ``process_meeting`` task is enqueued by the API service when the bot
 signals that recording is complete (via the ``/webhook/recording-complete``
@@ -37,6 +39,7 @@ from celery import Celery
 
 from pipeline.transcribe import transcribe
 from pipeline.diarize import diarize, format_transcript
+from pipeline.openai_transcribe_diarize import transcribe_diarize_openai
 from pipeline.summarize import summarize
 
 log = structlog.get_logger("worker")
@@ -46,6 +49,7 @@ REDIS_URL: str = os.getenv("REDIS_URL", "redis://redis:6379/0")
 API_BASE: str = os.getenv("API_BASE_URL", "http://api:8000")
 SHARED_DATA_DIR: str = os.getenv("SHARED_DATA_DIR", "/data")
 HF_TOKEN: str = os.environ.get("HF_TOKEN", "")
+TRANSCRIPTION_BACKEND: str = os.getenv("TRANSCRIPTION_BACKEND", "openai").strip().lower()
 POSTGRES_URL: str = os.getenv(
     "POSTGRES_URL",
     "postgresql+asyncpg://meetbot:meetbot@postgres:5432/meetbot",
@@ -179,9 +183,11 @@ def process_meeting(self, meeting_id: str, audio_path: str) -> dict[str, Any]:
     End-to-end meeting processing pipeline.
 
     Steps:
-        1. Transcribe with faster-whisper (auto-detect Hindi/English)
-        2. Diarize with whisperx (assign speakers)
-        3. Summarize with Claude (structured JSON)
+        1. Transcribe (+ diarize): OpenAI ``gpt-4o-transcribe-diarize`` when
+           ``TRANSCRIPTION_BACKEND=openai`` (default), else faster-whisper then
+           whisperx/pyannote.
+        2. (Whisper path only) Diarize with whisperx.
+        3. Summarize with OpenAI (structured JSON)
         4. Save artifacts to shared volume
         5. POST results to API
 
@@ -204,6 +210,7 @@ def process_meeting(self, meeting_id: str, audio_path: str) -> dict[str, Any]:
             "pipeline.start",
             meeting_id=meeting_id,
             audio=audio_path,
+            transcription_backend=TRANSCRIPTION_BACKEND,
             hf_token_set=bool(HF_TOKEN),
         )
 
@@ -215,21 +222,71 @@ def process_meeting(self, meeting_id: str, audio_path: str) -> dict[str, Any]:
         size_mb = audio.stat().st_size / (1024 * 1024)
         log.info("pipeline.audio_info", size_mb=f"{size_mb:.1f}")
 
-        # ── Step 1: Transcribe ───────────────────────────────────────
-        log.info("pipeline.step", step="transcribe", n=1)
-        step_t0 = time.monotonic()
+        # ── Step 1–2: Transcribe (+ diarize) ─────────────────────────
+        if TRANSCRIPTION_BACKEND == "openai":
+            log.info("pipeline.step", step="transcribe_diarize_openai", n=1)
+            step_t0 = time.monotonic()
 
-        segments = transcribe(audio_path)
-        _save_artifact(meeting_id, "01_transcript_raw", segments)
+            utterances, raw_td = transcribe_diarize_openai(audio_path)
+            _save_artifact(meeting_id, "01_transcript_raw", raw_td)
+            _save_artifact(meeting_id, "02_transcript_diarized", utterances)
+            formatted = format_transcript(utterances)
+            _save_text_artifact(meeting_id, "02_transcript_readable", formatted)
 
-        log.info(
-            "pipeline.step_done",
-            step="transcribe",
-            segments=len(segments),
-            elapsed=f"{time.monotonic() - step_t0:.1f}s",
-        )
+            log.info(
+                "pipeline.step_done",
+                step="transcribe_diarize_openai",
+                utterances=len(utterances),
+                speakers=len({u.get("speaker") for u in utterances}),
+                elapsed=f"{time.monotonic() - step_t0:.1f}s",
+            )
+        else:
+            log.info("pipeline.step", step="transcribe", n=1)
+            step_t0 = time.monotonic()
 
-        if not segments:
+            segments = transcribe(audio_path)
+            _save_artifact(meeting_id, "01_transcript_raw", segments)
+
+            log.info(
+                "pipeline.step_done",
+                step="transcribe",
+                segments=len(segments),
+                elapsed=f"{time.monotonic() - step_t0:.1f}s",
+            )
+
+            if not segments:
+                log.warning("pipeline.empty_transcript", meeting_id=meeting_id)
+                result = {
+                    "meeting_id": meeting_id,
+                    "status": "completed",
+                    "transcript": [],
+                    "summary": {"executive_summary": "No speech detected in the recording."},
+                }
+                _notify_api(result)
+                return result
+
+            log.info("pipeline.step", step="diarize", n=2)
+            step_t0 = time.monotonic()
+
+            utterances = diarize(
+                audio_path=audio_path,
+                whisper_segments=segments,
+                hf_token=HF_TOKEN,
+            )
+            _save_artifact(meeting_id, "02_transcript_diarized", utterances)
+
+            formatted = format_transcript(utterances)
+            _save_text_artifact(meeting_id, "02_transcript_readable", formatted)
+
+            log.info(
+                "pipeline.step_done",
+                step="diarize",
+                utterances=len(utterances),
+                speakers=len({u.get("speaker") for u in utterances}),
+                elapsed=f"{time.monotonic() - step_t0:.1f}s",
+            )
+
+        if not utterances:
             log.warning("pipeline.empty_transcript", meeting_id=meeting_id)
             result = {
                 "meeting_id": meeting_id,
@@ -239,29 +296,6 @@ def process_meeting(self, meeting_id: str, audio_path: str) -> dict[str, Any]:
             }
             _notify_api(result)
             return result
-
-        # ── Step 2: Diarize ──────────────────────────────────────────
-        log.info("pipeline.step", step="diarize", n=2)
-        step_t0 = time.monotonic()
-
-        utterances = diarize(
-            audio_path=audio_path,
-            whisper_segments=segments,
-            hf_token=HF_TOKEN,
-        )
-        _save_artifact(meeting_id, "02_transcript_diarized", utterances)
-
-        # Also save the human-readable transcript
-        formatted = format_transcript(utterances)
-        _save_text_artifact(meeting_id, "02_transcript_readable", formatted)
-
-        log.info(
-            "pipeline.step_done",
-            step="diarize",
-            utterances=len(utterances),
-            speakers=len({u.get("speaker") for u in utterances}),
-            elapsed=f"{time.monotonic() - step_t0:.1f}s",
-        )
 
         # ── Step 3: Summarize ────────────────────────────────────────
         log.info("pipeline.step", step="summarize", n=3)
@@ -334,26 +368,40 @@ def main() -> None:
     t0 = time.monotonic()
 
     try:
-        # Transcribe
-        segments = transcribe(args.audio_path)
-        _save_artifact(args.meeting_id, "01_transcript_raw", segments)
-        print(f"✓ Transcribed: {len(segments)} segments", file=sys.stderr)
+        if TRANSCRIPTION_BACKEND == "openai":
+            utterances, raw_td = transcribe_diarize_openai(args.audio_path)
+            _save_artifact(args.meeting_id, "01_transcript_raw", raw_td)
+            _save_artifact(args.meeting_id, "02_transcript_diarized", utterances)
+            formatted = format_transcript(utterances)
+            _save_text_artifact(args.meeting_id, "02_transcript_readable", formatted)
+            speakers = {u.get("speaker") for u in utterances}
+            print(
+                f"✓ OpenAI transcribe+diarize: {len(utterances)} utterances, {len(speakers)} speakers",
+                file=sys.stderr,
+            )
+        else:
+            segments = transcribe(args.audio_path)
+            _save_artifact(args.meeting_id, "01_transcript_raw", segments)
+            print(f"✓ Transcribed: {len(segments)} segments", file=sys.stderr)
 
-        if not segments:
-            print("⚠ No segments found — empty audio?", file=sys.stderr)
+            if not segments:
+                print("⚠ No segments found — empty audio?", file=sys.stderr)
+                sys.exit(0)
+
+            utterances = diarize(
+                audio_path=args.audio_path,
+                whisper_segments=segments,
+                hf_token=HF_TOKEN,
+            )
+            _save_artifact(args.meeting_id, "02_transcript_diarized", utterances)
+            formatted = format_transcript(utterances)
+            _save_text_artifact(args.meeting_id, "02_transcript_readable", formatted)
+            speakers = {u.get("speaker") for u in utterances}
+            print(f"✓ Diarized: {len(utterances)} utterances, {len(speakers)} speakers", file=sys.stderr)
+
+        if not utterances:
+            print("⚠ No utterances — empty audio?", file=sys.stderr)
             sys.exit(0)
-
-        # Diarize
-        utterances = diarize(
-            audio_path=args.audio_path,
-            whisper_segments=segments,
-            hf_token=HF_TOKEN,
-        )
-        _save_artifact(args.meeting_id, "02_transcript_diarized", utterances)
-        formatted = format_transcript(utterances)
-        _save_text_artifact(args.meeting_id, "02_transcript_readable", formatted)
-        speakers = {u.get("speaker") for u in utterances}
-        print(f"✓ Diarized: {len(utterances)} utterances, {len(speakers)} speakers", file=sys.stderr)
 
         # Summarize
         meeting_meta = _fetch_meeting_meta(args.meeting_id)

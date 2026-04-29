@@ -12,7 +12,7 @@ Pipeline
 4.  Run pyannote speaker diarization (requires HF_TOKEN).
 5.  Assign speaker labels to each word.
 6.  Merge consecutive words from the same speaker into clean utterances.
-7.  Translate Hindi utterances to English via ``transcribe.translate_segment``.
+7.  Translate Hindi utterances to English via ``hi_en_translate.translate_segment``.
 
 Graceful degradation
 ────────────────────
@@ -39,7 +39,7 @@ import structlog
 import torch
 import whisperx
 
-from pipeline.transcribe import translate_segment
+from pipeline.hi_en_translate import translate_segment
 
 log = structlog.get_logger("diarize")
 

@@ -1,8 +1,8 @@
 ###############################################################################
 # Magentic-meetbot  ·  Pipeline service (Celery worker)
 #
-# Runs: faster-whisper transcription → whisperx diarization →
-#       Helsinki-NLP translation → OpenAI summarisation
+# Runs: (default) OpenAI gpt-4o-transcribe-diarize, or faster-whisper + whisperx →
+#       Helsinki-NLP translation for Hindi lines → OpenAI summarisation
 #
 # Single-concurrency worker to avoid OOM with large ML models.
 ###############################################################################
